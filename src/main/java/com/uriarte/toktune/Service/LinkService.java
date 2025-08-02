@@ -12,6 +12,8 @@ import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Value;
+
 @Service
 public class LinkService {
 
