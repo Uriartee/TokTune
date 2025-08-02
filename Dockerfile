@@ -1,4 +1,15 @@
-# Usar imagen de OpenJDK con Alpine
+# Multi-stage build para compilar y ejecutar
+# Etapa 1: Compilación
+FROM maven:3.8.6-openjdk-17-slim AS build
+
+# Copiar archivos del proyecto
+COPY pom.xml .
+COPY src src
+
+# Compilar la aplicación
+RUN mvn clean package -DskipTests
+
+# Etapa 2: Runtime
 FROM openjdk:17-jdk-alpine
 
 # Instalar dependencias del sistema
@@ -33,8 +44,8 @@ WORKDIR /app
 # Crear directorio para archivos de audio
 RUN mkdir -p /app/songs
 
-# Copiar el JAR compilado
-COPY target/*.jar app.jar
+# Copiar el JAR desde la etapa de build
+COPY --from=build target/*.jar app.jar
 
 # Exponer puerto
 EXPOSE 8080
