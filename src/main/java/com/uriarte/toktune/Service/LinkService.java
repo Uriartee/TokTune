@@ -6,9 +6,9 @@ import okhttp3.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 
+import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
@@ -22,7 +22,6 @@ public class LinkService {
         this.auddApiToken = auddApiToken;
     }
 
-    // Lista de dominios permitidos
     private static final List<String> ALLOWED_DOMAINS = Arrays.asList(
             "youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com",
             "tiktok.com", "www.tiktok.com", "vm.tiktok.com",
@@ -95,7 +94,7 @@ public class LinkService {
 
             Response response = client.newCall(request).execute();
             String result = response.body().string();
-            System.out.println("Respuesta de Audd.io: " + result);
+            System.out.println("Respuesta Audd: " + result);
 
             String filteredResult = filterJson(result);
 
@@ -112,7 +111,6 @@ public class LinkService {
 
         } catch (Exception e) {
             e.printStackTrace();
-            // Intentar eliminar el archivo incluso si hay error
             if (songFile.exists()) {
                 songFile.delete();
             }
@@ -120,108 +118,108 @@ public class LinkService {
         }
     }
 
-    /**
-     * Descargar audio usando una API externa
-     * Opciones: RapidAPI, YouTube API, etc.
-     */
-    private String downloadAudioFromApi(String videoUrl, String minute, String second) {
+    private String formatTime(String minute, String second) {
+        int min = 0;
+        int sec = 0;
+
         try {
-            // Opción 1: Usar RapidAPI YouTube Downloader
-            OkHttpClient client = new OkHttpClient();
-
-            // Construir la URL de la API (ejemplo con RapidAPI)
-            String apiUrl = "https://youtube-mp3-downloader2.p.rapidapi.com/ytmp3/ytmp3/";
-
-            RequestBody formBody = new FormBody.Builder()
-                    .add("url", videoUrl)
-                    .build();
-
-            Request request = new Request.Builder()
-                    .url(apiUrl)
-                    .post(formBody)
-                    .addHeader("X-RapidAPI-Key", "TU_RAPIDAPI_KEY") // Necesitas configurar esto
-                    .addHeader("X-RapidAPI-Host", "youtube-mp3-downloader2.p.rapidapi.com")
-                    .build();
-
-            Response response = client.newCall(request).execute();
-            String jsonResponse = response.body().string();
-
-            // Parsear la respuesta para obtener la URL del audio
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(jsonResponse);
-            String audioUrl = root.path("dlink").asText();
-
-            if (audioUrl != null && !audioUrl.isEmpty()) {
-                return downloadAudioFile(audioUrl, minute, second);
+            if (minute != null && !minute.isEmpty()) {
+                min = Integer.parseInt(minute);
             }
+            if (second != null && !second.isEmpty()) {
+                sec = Integer.parseInt(second);
+            }
+        } catch (NumberFormatException e) {
+            min = 0;
+            sec = 0;
+        }
 
-            return "Error: No se pudo obtener el audio";
+        return String.format("00:%02d:%02d", min, sec);
+    }
 
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "Error al descargar el audio";
+    /**
+     * Detectar si estamos en desarrollo (Windows) o producción (Linux)
+     */
+    private String getYtDlpCommand() {
+        String os = System.getProperty("os.name").toLowerCase();
+        System.out.println("Sistema operativo detectado: " + os);
+
+        if (os.contains("win")) {
+            return "yt-dlp.exe"; // Para desarrollo local en Windows
+        } else {
+            return "yt-dlp"; // Para producción en Linux (Railway)
         }
     }
 
-    private String downloadAudioFile(String audioUrl, String minute, String second) {
+    public String getSong(String tiktoklink, String minute, String second) {
+        if (!isValidUrl(tiktoklink)) {
+            return "❌ Error: URL no permitida. Solo se aceptan enlaces de YouTube, TikTok, Instagram y Facebook.";
+        }
+
         try {
+            String ytDlpCommand = getYtDlpCommand();
             int idsong = (int) (Math.random() * 10000) + 1;
             String songPath = "./songs/song" + idsong + ".mp3";
 
             // Crear directorio si no existe
             File songsDir = new File("./songs");
             if (!songsDir.exists()) {
-                songsDir.mkdirs();
+                boolean created = songsDir.mkdirs();
+                System.out.println("Directorio songs creado: " + created);
             }
 
-            // Descargar el archivo de audio
-            URL url = new URL(audioUrl);
-            try (InputStream in = url.openStream();
-                 FileOutputStream out = new FileOutputStream(songPath)) {
+            String startTime = formatTime(minute, second);
+            System.out.println("Usando comando: " + ytDlpCommand);
+            System.out.println("Descargando desde: " + startTime);
 
-                byte[] buffer = new byte[1024];
-                int bytesRead;
-                while ((bytesRead = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, bytesRead);
+            ProcessBuilder pb = new ProcessBuilder(
+                    ytDlpCommand,
+                    "-x",                           // extraer audio
+                    "--audio-format", "mp3",        // formato deseado
+                    "--postprocessor-args",
+                    "ffmpeg:-ss " + startTime + " -t 10", // comenzar en startTime y durar 10 segundos
+                    "-o", songPath,                 // nombre de salida
+                    "--no-playlist",                // no descargar playlist completa
+                    "--no-warnings",                // reducir output
+                    tiktoklink
+            );
+
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    System.out.println("yt-dlp: " + line);
                 }
             }
 
-            return songPath;
+            int exitCode = process.waitFor();
+            System.out.println("yt-dlp exit code: " + exitCode);
+
+            if (exitCode == 0) {
+                // Verificar que el archivo se haya creado
+                File songFile = new File(songPath);
+                if (songFile.exists() && songFile.length() > 0) {
+                    System.out.println("✅ Descarga completada: " + songPath);
+                    return callAuddApi(songPath);
+                } else {
+                    System.out.println("❌ Archivo no encontrado o vacío: " + songPath);
+                    return "❌ Error: No se pudo descargar el audio";
+                }
+            } else {
+                return "❌ Error al descargar (código: " + exitCode + ")";
+            }
 
         } catch (Exception e) {
+            System.err.println("Excepción en getSong: " + e.getMessage());
             e.printStackTrace();
-            return null;
+            return "❌ Error: " + e.getMessage();
         }
     }
 
-    public String getSong(String videoUrl, String minute, String second) {
-        // Validar la URL antes de procesar
-        if (!isValidUrl(videoUrl)) {
-            return "❌ Error: URL no permitida. Solo se aceptan enlaces de YouTube, TikTok, Instagram y Facebook.";
-        }
-
-        try {
-            System.out.println("Procesando URL: " + videoUrl);
-            System.out.println("Tiempo de inicio: " + minute + ":" + second);
-
-            // TEMPORAL: Mensaje explicativo mientras se implementa la API externa
-            return "⚠️ Servicio temporalmente no disponible. La funcionalidad de descarga de audio está siendo migrada para funcionar en el servidor de producción. Por favor, inténtalo más tarde.";
-
-            // TODO: Descomentar cuando tengas configurada una API externa
-            // String audioPath = downloadAudioFromApi(videoUrl, minute, second);
-            // if (audioPath != null) {
-            //     return callAuddApi(audioPath);
-            // } else {
-            //     return "❌ Error al descargar el audio";
-            // }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return "❌ Error al procesar la solicitud";
-        }
-    }
-
-    public String getSong(String videoUrl) {
-        return getSong(videoUrl, "0", "0");
+    public String getSong(String tiktoklink) {
+        return getSong(tiktoklink, "0", "0");
     }
 }
