@@ -27,28 +27,31 @@ public class LinkController {
     @PostMapping("/postlink")
     public ResponseEntity<?> postLink(@RequestBody Song request, HttpServletRequest httpRequest) {
 
-        // Validación básica
         if (request.getUrl() == null || request.getUrl().trim().isEmpty()) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "URL is required"));
         }
 
-        // Validar formato de URL
         if (!isValidUrl(request.getUrl())) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "Invalid URL format"));
         }
 
         try {
-            // Pasar también los parámetros de tiempo al servicio
             String result = linkService.getSong(
                     request.getUrl(),
                     request.getMinute() != null ? request.getMinute() : "0",
                     request.getSecond() != null ? request.getSecond() : "0"
             );
+
+            // Verificar si el resultado es un error
+            if (result.equals("Error") || result.startsWith("❌")) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", result));
+            }
+
             return ResponseEntity.ok(Map.of("result", result));
         } catch (Exception e) {
-            // Log del error para debugging
             System.err.println("Error processing request from " +
                     httpRequest.getRemoteAddr() + ": " + e.getMessage());
 
