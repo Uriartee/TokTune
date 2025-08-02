@@ -31,3 +31,17 @@ build/
 
 ### VS Code ###
 .vscode/
+
+# Variables de entorno
+.env
+.env.local
+.env.production
+
+# Archivos temporales
+/songs/
+*.mp3
+*.mp4
+*.wav
+
+# Logs
+*.log
