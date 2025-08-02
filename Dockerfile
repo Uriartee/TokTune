@@ -1,6 +1,9 @@
 # Multi-stage build para compilar y ejecutar
 # Etapa 1: Compilación
-FROM maven:3.8.6-openjdk-17-slim AS build
+FROM maven:3.9-eclipse-temurin-17-alpine AS build
+
+# Crear directorio de trabajo
+WORKDIR /app
 
 # Copiar archivos del proyecto
 COPY pom.xml .
@@ -10,7 +13,7 @@ COPY src src
 RUN mvn clean package -DskipTests
 
 # Etapa 2: Runtime
-FROM openjdk:17-jdk-alpine
+FROM eclipse-temurin:17-jre-alpine
 
 # Instalar dependencias del sistema
 RUN apk update && \
@@ -45,7 +48,7 @@ WORKDIR /app
 RUN mkdir -p /app/songs
 
 # Copiar el JAR desde la etapa de build
-COPY --from=build target/*.jar app.jar
+COPY --from=build /app/target/*.jar app.jar
 
 # Exponer puerto
 EXPOSE 8080
