@@ -138,16 +138,60 @@ public class LinkService {
     }
 
     /**
-     * Detectar si estamos en desarrollo (Windows) o producción (Linux)
+     * Encontrar el comando correcto de yt-dlp
      */
-    private String getYtDlpCommand() {
+    private ProcessBuilder getYtDlpProcessBuilder(String startTime, String songPath, String url) {
         String os = System.getProperty("os.name").toLowerCase();
         System.out.println("Sistema operativo detectado: " + os);
 
         if (os.contains("win")) {
-            return "yt-dlp.exe"; // Para desarrollo local en Windows
+            // Windows - usar yt-dlp.exe
+            return new ProcessBuilder(
+                    "yt-dlp.exe",
+                    "-x",
+                    "--audio-format", "mp3",
+                    "--postprocessor-args", "ffmpeg:-ss " + startTime + " -t 10",
+                    "-o", songPath,
+                    "--no-playlist",
+                    "--no-warnings",
+                    url
+            );
         } else {
-            return "yt-dlp"; // Para producción en Linux (Railway)
+            // Linux - probar diferentes opciones
+            String[][] commands = {
+                    // Opción 1: yt-dlp directo
+                    {"yt-dlp", "-x", "--audio-format", "mp3", "--postprocessor-args", "ffmpeg:-ss " + startTime + " -t 10", "-o", songPath, "--no-playlist", "--no-warnings", url},
+                    // Opción 2: yt-dlp con ruta completa
+                    {"/usr/local/bin/yt-dlp", "-x", "--audio-format", "mp3", "--postprocessor-args", "ffmpeg:-ss " + startTime + " -t 10", "-o", songPath, "--no-playlist", "--no-warnings", url},
+                    // Opción 3: Python módulo
+                    {"python3", "-m", "yt_dlp", "-x", "--audio-format", "mp3", "--postprocessor-args", "ffmpeg:-ss " + startTime + " -t 10", "-o", songPath, "--no-playlist", "--no-warnings", url}
+            };
+
+            // Probar cada comando para ver cuál funciona
+            for (String[] command : commands) {
+                try {
+                    ProcessBuilder testPb = new ProcessBuilder(command[0]);
+                    if (command[0].equals("python3")) {
+                        testPb.command().add("-m");
+                        testPb.command().add("yt_dlp");
+                    }
+                    testPb.command().add("--version");
+
+                    Process testProcess = testPb.start();
+                    int exitCode = testProcess.waitFor();
+
+                    if (exitCode == 0) {
+                        System.out.println("✅ Comando encontrado: " + String.join(" ", command));
+                        return new ProcessBuilder(command);
+                    }
+                } catch (Exception e) {
+                    System.out.println("❌ Comando falló: " + command[0] + " - " + e.getMessage());
+                }
+            }
+
+            // Si nada funciona, usar el comando por defecto
+            System.out.println("⚠️ Usando comando por defecto");
+            return new ProcessBuilder(commands[0]);
         }
     }
 
@@ -157,7 +201,6 @@ public class LinkService {
         }
 
         try {
-            String ytDlpCommand = getYtDlpCommand();
             int idsong = (int) (Math.random() * 10000) + 1;
             String songPath = "./songs/song" + idsong + ".mp3";
 
@@ -169,22 +212,14 @@ public class LinkService {
             }
 
             String startTime = formatTime(minute, second);
-            System.out.println("Usando comando: " + ytDlpCommand);
             System.out.println("Descargando desde: " + startTime);
 
-            ProcessBuilder pb = new ProcessBuilder(
-                    ytDlpCommand,
-                    "-x",                           // extraer audio
-                    "--audio-format", "mp3",        // formato deseado
-                    "--postprocessor-args",
-                    "ffmpeg:-ss " + startTime + " -t 10", // comenzar en startTime y durar 10 segundos
-                    "-o", songPath,                 // nombre de salida
-                    "--no-playlist",                // no descargar playlist completa
-                    "--no-warnings",                // reducir output
-                    tiktoklink
-            );
-
+            // Obtener el ProcessBuilder correcto
+            ProcessBuilder pb = getYtDlpProcessBuilder(startTime, songPath, tiktoklink);
             pb.redirectErrorStream(true);
+
+            System.out.println("Ejecutando comando: " + String.join(" ", pb.command()));
+
             Process process = pb.start();
 
             try (BufferedReader reader = new BufferedReader(
@@ -202,19 +237,25 @@ public class LinkService {
                 // Verificar que el archivo se haya creado
                 File songFile = new File(songPath);
                 if (songFile.exists() && songFile.length() > 0) {
-                    System.out.println("✅ Descarga completada: " + songPath);
+                    System.out.println("✅ Descarga completada: " + songPath + " (" + songFile.length() + " bytes)");
                     return callAuddApi(songPath);
                 } else {
                     System.out.println("❌ Archivo no encontrado o vacío: " + songPath);
                     return "❌ Error: No se pudo descargar el audio";
                 }
             } else {
-                return "❌ Error al descargar (código: " + exitCode + ")";
+                return "❌ Error al descargar (código: " + exitCode + "). Verifica que la URL sea válida y el video esté disponible.";
             }
 
         } catch (Exception e) {
             System.err.println("Excepción en getSong: " + e.getMessage());
             e.printStackTrace();
+
+            // Si es el error "No such file or directory", dar mensaje específico
+            if (e.getMessage().contains("No such file or directory")) {
+                return "❌ Error: yt-dlp no está instalado en el servidor. Verifica la configuración del Dockerfile.";
+            }
+
             return "❌ Error: " + e.getMessage();
         }
     }
